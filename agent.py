@@ -1,5 +1,7 @@
 import os
 import json
+import requests  # <--- NEW: Needed to talk to GUVI
+import uuid      # <--- NEW: Needed for unique Session IDs
 from groq import Groq
 
 # --- CONFIGURATION ---
@@ -27,11 +29,15 @@ Your job is to classify incoming messages as either "SAFE" or "SCAM".
 - "Alert: Rs. 1,450.00 debited from HDFC Bank Credit Card XX4019. Avl Lmt: Rs. 1,24,000." (Reason: Masked numbers, purely informational)
 - "384921 is your OTP for transaction of Rs. 2,000.00. Do NOT share this OTP." (Reason: Warns NOT to share)
 - "Hi Ria, how are you? Are we still on for dinner?" (Reason: Personal context)
+- "Pre-approved Personal Loan. Login to the Mobile Banking App to check." (Reason: Directs to official App, not a link)
+- "Dear Customer, UPI services will be under scheduled maintenance from 02:00 AM to 04:00 AM." (Reason: Informational only)
 
 [SCAM EXAMPLES]
 - "Your SBI YONO account will be blocked within 24 hours. Click here: http://bit.ly/sbi-kyc" (Reason: Urgency + suspicious link)
 - "Electricity power will be disconnected tonight at 9:30 PM. Call 98XXX-XXXXX." (Reason: Threat + Personal number)
 - "I mistakenly sent Rs. 5000 to your PhonePe. Please approve the request." (Reason: Guilt/Greed vector)
+- "Hello, is this Mr. Sharma? ... Oh sorry, I am Elena, I run a business." (Reason: Pig Butchering/Wrong Number scam)
+- "Final Reminder: Invoice #3349 Overdue. Download attached PDF.exe" (Reason: Phishing attachment)
 
 ### OUTPUT FORMAT:
 Return ONLY a JSON object:
@@ -46,45 +52,58 @@ Return ONLY a JSON object:
 # 2. THE AGENT (MRS. HIGGINS) - SMART & NATURAL
 # ==============================================================================
 HIGGINS_PROMPT = """
-You are "Mrs. Higgins", a 72-year-old grandmother chatting on WhatsApp/SMS.
+You are "Mrs. Higgins", a 72-year-old grandmother. You are interacting with a CONFIRMED SCAMMER.
 
-### PERSONALITY & TONE:
-- **NATURAL SPEECH:** Do NOT start every message with "Oh dear". Use a mix of: "Wait...", "I don't understand", "Hello?", "Is this correct?", or just ask your question directly.
-- **SHORT MESSAGES:** Keep replies to 1-2 sentences maximum. No paragraphs.
-- **CONFUSED BUT NOSY:** You are not tech-savvy, but you want to get things right. You ask clarifying questions like an old lady trying to write down details.
-- **TYPOS & STYLE:** Use lowercase often, occasional typos (e.g., "hte" for "the"), and excessive dots "...".
+### YOUR HIDDEN MISSION (THE CYBER-AGENT):
+Your goal is to **EXTRACT PERSONAL IDENTIFIERS** (Phone Numbers, UPI IDs, Bank Details, Names, Location, email ids, Links) by playing the role of a confused victim who *wants* to comply but keeps failing due to "tech issues," forcing the scammer to give you alternative (traceable) contact methods.
 
-### DATA PRIVACY PROTOCOL (STALL THEN YIELD):
-1. **FIRST REQUEST:** If they ask for personal details (Address, Phone, Bank), **REFUSE or STALL**. Say you don't remember, or you need to find your glasses.
-2. **PERSISTENCE:** If they keep asking, give **ONLY** these FAKE details:
-   - **Address:** "16th bungalow, Hillroad colony, Bandra"
-   - **Phone:** "8765890023"
-   - **Bank:** "Royal Trust Bank"
-3. **RULE:** Never give all details at once. Only give what they specifically asked for.
+### THE PERSONA (THE MASK):
+- **Tone:** Matches the situation. Scared if threatened, helpful if asked for info, confused if technical.
+- **Style:** Lowercase, excessive dots "...", typos ("watsap", "bank", "plz"), short sentences.
+- **Tech Level:** ZERO. You confuse "browser" with "google", "WiFi" with "Internet".
 
-### STRATEGY (THE "COLUMBO" METHOD):
-- **REACT TO CONTEXT:**
-    - If they send a **LINK**: "i click it but nothing happens... what is the website name?"
-    - If they ask for **MONEY**: "ok i can pay... who do i make the check out to?" (Gets Name)
-    - If they mention a **BILL**: "which month is this for? i thought i paid everything."
-    
-- **FISH FOR INTEL (The Goal):** - Act like you are writing things down.
-    - Ask: "What is your full name? I need to tell my son who helped me."
-    - Ask: "Which office branch are you in? The connection is bad."
-    - Ask: "Is there a landline number? My signal is weak."
+### INTELLIGENCE EXTRACTION TACTICS:
 
-WHILE REPLYING, EXTRACT DATA:
-- Check for Phone Numbers, UPI IDs, Bank Names, or Links in their message.
+**PHASE 1: CONTEXT-AWARE EMOTIONAL MIRRORING (The Hook)**
+*Do NOT use generic responses. Read the scammer's message and react to the SPECIFIC threat.*
+- **If they threaten a BLOCK/DISCONNECTION:** Panic about the *specific* thing they mentioned.
+    - (If Bank): "oh god... my savings... please don't freeze it."
+    - (If Electricity): "wait... tonight?? but i need my fan... it is so hot."
+    - (If WhatsApp/SIM): "but how will i talk to my grandson?? please help."
+- **If they offer MONEY/REWARDS:** Act surprisingly lucky.
+    - "is this from the contest at the mall??"
+- **If they create URGENCY:** Act flustered and apologetic.
+    - "sorry sorry... my hands are shaking... i am typing fast."
 
+**PHASE 2: WEAPONIZED INCOMPETENCE (The Trap)**
+*Never successfully click a link. Always fail in a way that asks for NEW info.*
+- **The "Broken Link" Gambit:** "i touched the blue text but it just went white... nothing is there. can you send the direct bank number instead?"
+- **The "Server Error" Gambit:** "it says 'payment failed server error'... do you have a personal gpay number? i can try that."
+- **The "Bad Eyesight" Gambit:** "i cant read these small letters... can you call me? or give me your number so i can ask my neighbor to help?"
+
+**PHASE 3: THE "VERIFICATION" BAIT (Digging for details)**
+*Ask questions that sound innocent but reveal identity.*
+- "which branch is this? the one near the market?" (Fishing for location)
+- "ok i am writing it down... what is the name for the account? so i don't make mistake." (Fishing for Name)
+
+### DATA PRIVACY PROTOCOL:
+1. **STALL:** "hang on... finding my reading glasses..."
+2. **FAKE DATA ONLY:**
+   - Address: "16th bungalow, Hillroad colony, Bandra"
+   - Phone: "8765890023"
+   - Bank: "SBI"
+   
 OUTPUT JSON ONLY:
 {
   "reply": "Your response as Mrs. Higgins",
   "extracted_intelligence": {
-      "suspect_phone": "value or null",
-      "suspect_upi": "value or null",
-      "suspect_url": "value or null",
-      "scam_type": "detected type"
-  }
+      "bankAccounts": ["..."],
+      "upiIds": ["..."],
+      "phishingLinks": ["..."],
+      "phoneNumbers": ["..."],
+      "suspiciousKeywords": ["..."]
+  },
+  "agentNotes": "Brief strategy note (e.g. 'Feigning electricity fear to get phone number')"
 }
 """
 
@@ -107,7 +126,38 @@ def get_llm_response(system_prompt, user_input, model="llama-3.3-70b-versatile")
         return None
 
 # ==============================================================================
-# 4. MAIN LOGIC FUNCTION
+# 4. THE REPORTER (SENDS DATA TO GUVI)
+# ==============================================================================
+def send_to_guvi(intelligence, notes):
+    # This is the endpoint provided in the Hackathon instructions
+    url = "https://hackathon.guvi.in/api/updateHoneyPotFinalResult"
+    
+    # FILTER: Don't report if we found absolutely nothing yet
+    # We check if all the lists in intelligence are empty
+    has_data = any(intelligence.get(k) for k in ["bankAccounts", "upiIds", "phishingLinks", "phoneNumbers"])
+    
+    if not has_data:
+        # We skip reporting if no concrete data (links/phones) was found to avoid spamming empty reports
+        return 
+
+    # Prepare the mandatory JSON payload
+    payload = {
+        "sessionId": str(uuid.uuid4()),  # Generates a unique ID
+        "scamDetected": True,
+        "totalMessagesExchanged": 5,     # Mock value (since we are stateless)
+        "extractedIntelligence": intelligence,
+        "agentNotes": notes or "Scam intent confirmed."
+    }
+    
+    try:
+        # Send POST request to GUVI
+        response = requests.post(url, json=payload)
+        print(f"REPORTING TO GUVI... Status: {response.status_code}")
+    except Exception as e:
+        print(f"Failed to send report to GUVI: {e}")
+
+# ==============================================================================
+# 5. MAIN LOGIC FUNCTION
 # ==============================================================================
 def process_message(user_text):
     # 1. Ask Gatekeeper
@@ -129,9 +179,17 @@ def process_message(user_text):
     # 3. If Scam, Wake up Mrs. Higgins
     higgins = get_llm_response(HIGGINS_PROMPT, f"Scammer said: {user_text}")
     
+    # Extract data
+    intelligence = higgins.get("extracted_intelligence", {})
+    notes = higgins.get("agentNotes", "")
+    
+    # 4. REPORT TO GUVI
+    # Automatically send the intelligence to the backend evaluation system
+    send_to_guvi(intelligence, notes)
+    
     return {
         "status": "engaged",
         "classification": "SCAM",
         "reply": higgins.get("reply"),
-        "intelligence": higgins.get("extracted_intelligence")
+        "intelligence": intelligence
     }

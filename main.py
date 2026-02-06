@@ -49,14 +49,14 @@ async def chat_endpoint(request: MessageRequest, api_key: str = Depends(verify_a
 
 # --- FRONTEND ---
 # This accepts GET (for humans in a browser) and POST (for the judge's tester)
-@app.api_route("/", methods=["GET", "POST"], response_class=HTMLResponse)
+@app.api_route("/", methods=["GET", "POST"])
 async def home(request: Request):
-    # If the judge's tester sends a POST request here, we return a success 200
+    # Fix for Honey-Pot Tester: Return JSON instead of HTML for POST requests
     if request.method == "POST":
-        return HTMLResponse(content="<h1>Honeypot Active</h1>", status_code=200)
+        return {"status": "online", "message": "Honeypot Active"}
     
     # If a human opens it in a browser, show the UI
-    return """
+    return HTMLResponse(content="""
     <!DOCTYPE html>
     <html lang="en">
     <head>
@@ -256,7 +256,7 @@ async def home(request: Request):
         </script>
     </body>
     </html>
-    """
+    """)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

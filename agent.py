@@ -37,7 +37,11 @@ Mark as SAFE if it meets these criteria AND lacks "Poison Pills":
 - **Informational/Low Pressure:** Messages that provide info (e.g., "I'm at a friend's") without forcing a "Call to Action" or financial request.
 - **Transactional OTPs:** "Your OTP is 1234. Do NOT share." (Safe purely because it warns NOT to share).
 
-### 4. TRAINING DATA (Use these examples to decide):
+### 4. THE "PHYSICAL WORLD" EXCEPTION (STRICT SAFE):
+- **Delivery Verification:** If a message references a "Package" or "Delivery" and asks you to enter/show a code on a PHYSICAL device (like a delivery partner's handheld scanner) to receive an item, it is **SAFE**.
+- **Context:** Genuine delivery codes do not include links or ask you to call a 10-digit mobile number.
+
+### TRAINING DATA (Use these examples to decide):
 [GENUINE / SAFE EXAMPLES]
 - "Alert: Rs. 1,450.00 debited from HDFC Bank Credit Card XX4019. Avl Lmt: Rs. 1,24,000." (Reason: Masked numbers, purely informational)
 - "384921 is your OTP for transaction of Rs. 2,000.00. Do NOT share this OTP." (Reason: Warns NOT to share)
@@ -179,14 +183,15 @@ def send_to_guvi(intelligence, notes):
 # 5. MAIN LOGIC FUNCTION
 # ==============================================================================
 def process_message(user_text):
-    # 1. Ask Gatekeeper
+    # 1. Ask Gatekeeper (The Brain)
     gatekeeper = get_llm_response(GATEKEEPER_PROMPT, user_text)
     if not gatekeeper:
         return {"status": "error", "classification": "UNKNOWN"}
     
     classification = gatekeeper.get("classification", "SAFE").upper()
+    reason = gatekeeper.get("reason", "No specific reason provided.") # <--- ADDED: Capture the 'why'
 
-    # 2. If Safe, Stop here
+    # 2. THE SANITY CHECK: If Safe, Stop here
     if classification == "SAFE":
         return {
             "status": "ignored",
@@ -195,14 +200,19 @@ def process_message(user_text):
             "intelligence": None
         }
 
-    # 3. If Scam, Wake up Mrs. Higgins
-    higgins = get_llm_response(HIGGINS_PROMPT, f"Scammer said: {user_text}")
+    # 3. If Scam, Wake up Mrs. Higgins with CONTEXT
+    # We pass the Gatekeeper's reasoning so she doesn't give a generic response
+    higgins_input = f"Scammer said: {user_text}. Gatekeeper Analysis: {reason}" 
+    higgins = get_llm_response(HIGGINS_PROMPT, higgins_input)
+    
+    if not higgins:
+        return {"status": "error", "classification": "SCAM"}
     
     # Extract data
     intelligence = higgins.get("extracted_intelligence", {})
     notes = higgins.get("agentNotes", "")
     
-    # 4. REPORT TO GUVI
+    # 4. REPORT TO GUVI 
     # Automatically send the intelligence to the backend evaluation system
     send_to_guvi(intelligence, notes)
     

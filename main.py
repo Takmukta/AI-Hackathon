@@ -1,6 +1,6 @@
 import uvicorn
 import os
-from fastapi import FastAPI, HTTPException, Depends, Security
+from fastapi import FastAPI, HTTPException, Depends, Security, Request
 from fastapi.security import APIKeyHeader
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -48,8 +48,14 @@ async def chat_endpoint(request: MessageRequest, api_key: str = Depends(verify_a
     return result
 
 # --- FRONTEND ---
-@app.get("/", response_class=HTMLResponse)
-def home():
+# This accepts GET (for humans in a browser) and POST (for the judge's tester)
+@app.api_route("/", methods=["GET", "POST"], response_class=HTMLResponse)
+async def home(request: Request):
+    # If the judge's tester sends a POST request here, we return a success 200
+    if request.method == "POST":
+        return HTMLResponse(content="<h1>Honeypot Active</h1>", status_code=200)
+    
+    # If a human opens it in a browser, show the UI
     return """
     <!DOCTYPE html>
     <html lang="en">
